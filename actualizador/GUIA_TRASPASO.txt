@@ -1,0 +1,11 @@
+TRASPASO DEL ACTUALIZADOR A OTRA PERSONA
+
+1. Dar acceso a la carpeta de SharePoint y al repositorio de GitHub.
+2. La nueva persona sincroniza la carpeta de SharePoint con OneDrive.
+3. Clona el repositorio mediante GitHub Desktop.
+4. Ejecuta actualizador\Configurar_Actualizador.bat.
+5. Selecciona BBDD COMPARATIVO MODELOS MERCADO CHILE.xlsx desde su carpeta sincronizada.
+6. Ejecuta actualizador\Actualizar_Comparativo.bat.
+7. Comprueba que GitHub Pages muestre la fecha nueva en la parte inferior de la matriz.
+
+La ruta personal no se comparte ni se guarda en GitHub. Cada responsable configura la suya una sola vez.
