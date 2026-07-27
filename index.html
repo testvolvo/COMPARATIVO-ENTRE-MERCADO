@@ -178,7 +178,7 @@ main{padding:22px}
 .model-head .head-name{font-size:13px;line-height:1.25}
 .model-head .head-tags{display:flex;gap:5px;flex-wrap:wrap}
 .model-head .head-tags span{font-size:10px;background:rgba(255,255,255,.14);padding:3px 6px;border-radius:999px;color:#edf5fb}
-.empty-value{color:#98a2b3}
+.empty-value{font-size:1.08em;font-weight:700;color:#98a2b3}
 .yes{color:var(--good);font-weight:800}
 .no{color:var(--bad);font-weight:800}
 .data-note{font-size:11px;color:var(--muted);padding:12px 20px;background:#f7f9fc;border-top:1px solid var(--line)}
@@ -256,7 +256,7 @@ main{padding:22px}
     background:#d8e5f0!important;color:#101f3d!important;text-transform:uppercase;
     letter-spacing:.045em;font-size:7.2pt;padding:1.5mm 1.8mm;border-top:1.2mm solid #101f3d;
   }
-  .print-table .yes{color:#0b6a3e!important}.print-table .no{color:#9c2c2c!important}.print-table .empty-value{color:#7b8796!important}
+  .print-table .yes{color:#0b6a3e!important}.print-table .no{color:#9c2c2c!important}.print-table .empty-value{font-size:1.08em;font-weight:700;color:#7b8796!important}
   .print-empty{padding:15mm;text-align:center;border:1px solid #cbd7e4;color:#526176}
   .print-footnote{margin-top:2.5mm;color:#667085;font-size:6.8pt}
 }
@@ -715,7 +715,7 @@ main{padding:22px}
   }
 
   function formatValue(key,value) {
-    if (isEmpty(value)) return `<span class="empty-value">-</span>`;
+    if (isEmpty(value)) return `<span class="empty-value">—</span>`;
     if (isPriceColumn(key) && typeof value === "number") {
       const header=normalizeHeader(key);
       if (header.includes("USD") || header.includes("DOLAR")) return new Intl.NumberFormat("es-CL",{style:"currency",currency:"USD",maximumFractionDigits:0}).format(value);
@@ -1015,7 +1015,7 @@ main{padding:22px}
   }
 
   function pdfValue(key,value) {
-    if (isEmpty(value)) return '-';
+    if (isEmpty(value)) return '—';
     if (isPriceColumn(key) && typeof value==='number') {
       const header=normalizeHeader(key);
       if (header.includes('USD') || header.includes('DOLAR')) return 'US$'+new Intl.NumberFormat('es-CL',{maximumFractionDigits:0}).format(value);
