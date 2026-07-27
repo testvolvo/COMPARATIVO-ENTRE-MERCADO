@@ -357,7 +357,7 @@ main{padding:22px}
   let ROW_GROUPS = [];
   let FILTERS = [];
   let FIELD_MAP = {};
-  const DATA_CACHE_KEY = "comparativo-modelos-cache-v4";
+  const DATA_CACHE_KEY = "comparativo-modelos-cache-v5";
   const VERSION_URL = "./version.json";
   const MODELS_URL = "./modelos.json";
   const INTERNAL_COLUMNS = new Set(["_uid"]);
@@ -434,7 +434,35 @@ main{padding:22px}
   }
   const sanitizeDataValue = value => isExcelErrorValue(value) ? null : value;
   const isEmpty = value => value === null || value === undefined || isExcelErrorValue(value) || String(value).trim() === "";
-  const norm = value => isEmpty(value) ? "" : String(value).trim().replace(/\s+/g," ").toUpperCase();
+
+  function normalizeDisplayText(value) {
+    if (isEmpty(value)) return "";
+    if (typeof value !== "string") return value;
+    let text = value
+      .replace(/\u00A0/g," ")
+      .trim()
+      .replace(/\s+/g," ")
+      .replace(/\s*([/\\-])\s*/g,"$1")
+      .replace(/(\d{1,2})\s*[xX×]\s*(\d{1,2})/g,"$1X$2");
+    return text.toLocaleUpperCase("es-CL");
+  }
+
+  function canonicalFilterValue(value) {
+    if (isEmpty(value)) return "";
+    return String(normalizeDisplayText(value))
+      .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+      .replace(/[^A-Z0-9]+/g,"");
+  }
+
+  function canonicalComparisonValue(value) {
+    if (isEmpty(value)) return "";
+    if (typeof value === "number") return `N:${value}`;
+    return `T:${String(normalizeDisplayText(value))
+      .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+      .replace(/\s+/g,"")}`;
+  }
+
+  const norm = value => isEmpty(value) ? "" : String(normalizeDisplayText(value));
   const normalizeHeader = value => norm(value)
     .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
     .replace(/[^A-Z0-9]+/g," ").trim().replace(/\s+/g," ");
@@ -534,7 +562,9 @@ main{padding:22px}
 
   function valueOf(record,semantic) {
     const key=FIELD_MAP[semantic];
-    return key ? record?.[key] : "";
+    if (!key) return "";
+    const value=record?.[key];
+    return typeof value === "string" ? normalizeDisplayText(value) : value;
   }
 
   function smartLabel(key) {
@@ -600,7 +630,8 @@ main{padding:22px}
     return FILTERS.every(f => {
       if (f.key === excludeKey) return true;
       const selected = state.filters[f.key];
-      return selected.size === 0 || selected.has(String(record[f.key] ?? ""));
+      const recordKey = canonicalFilterValue(record[f.key]);
+      return selected.size === 0 || selected.has(recordKey);
     });
   }
 
@@ -610,7 +641,12 @@ main{padding:22px}
     while (changed && loops < FILTERS.length + 2) {
       changed = false; loops++;
       for (const f of FILTERS) {
-        const valid = new Set(DATA.filter(r => matchesFilters(r,f.key)).map(r => String(r[f.key] ?? "")).filter(Boolean));
+        const valid = new Set(
+          DATA
+            .filter(r => matchesFilters(r,f.key))
+            .map(r => canonicalFilterValue(r[f.key]))
+            .filter(Boolean)
+        );
         for (const value of [...state.filters[f.key]]) {
           if (!valid.has(value)) {
             state.filters[f.key].delete(value);
@@ -622,33 +658,54 @@ main{padding:22px}
   }
 
   function filteredRecords() {
-    const q = norm(state.modelSearch);
+    const q = canonicalFilterValue(state.modelSearch);
     return DATA.filter(record => {
       const searchable=[valueOf(record,"brand"),valueOf(record,"model"),valueOf(record,"designation"),valueOf(record,"traction"),...ALL_COLUMNS.map(key=>record[key])].join(" ");
-      return matchesFilters(record) && (!q || norm(searchable).includes(q));
+      return matchesFilters(record) && (!q || canonicalFilterValue(searchable).includes(q));
     });
   }
 
+  function optionDisplayScore(label) {
+    let score = 0;
+    if (/\dX\d/.test(label)) score += 30;
+    if (/[A-ZÁÉÍÓÚÑ]\s+\d|\d\s+[A-ZÁÉÍÓÚÑ]/.test(label)) score += 8;
+    if (!/\s{2,}/.test(label)) score += 3;
+    return score;
+  }
+
   function optionCounts(key) {
-    const counts = new Map();
+    const groups = new Map();
     DATA.filter(r => matchesFilters(r,key)).forEach(r => {
-      const v = String(r[key] ?? "");
-      if (v) counts.set(v,(counts.get(v) || 0) + 1);
+      const raw = r[key];
+      const canonical = canonicalFilterValue(raw);
+      if (!canonical) return;
+      const label = String(normalizeDisplayText(raw));
+      if (!groups.has(canonical)) groups.set(canonical,{count:0,variants:new Map(),label});
+      const group = groups.get(canonical);
+      group.count++;
+      group.variants.set(label,(group.variants.get(label) || 0) + 1);
     });
-    return counts;
+    for (const group of groups.values()) {
+      group.label = [...group.variants.entries()]
+        .sort((a,b) => b[1]-a[1] || optionDisplayScore(b[0])-optionDisplayScore(a[0]) || compareNatural(a[0],b[0]))[0][0];
+      delete group.variants;
+    }
+    return groups;
   }
 
   function filterSummary(key) {
     const values = [...state.filters[key]];
     if (!values.length) return "Todas";
-    if (values.length === 1) return values[0];
+    if (values.length === 1) {
+      return optionCounts(key).get(values[0])?.label || values[0];
+    }
     return `${values.length} selecciones`;
   }
 
   function renderFilters() {
     els.filterGrid.innerHTML = FILTERS.map(f => {
       const counts = optionCounts(f.key);
-      const values = [...counts.keys()].sort(compareNatural);
+      const options = [...counts.entries()].sort((a,b)=>compareNatural(a[1].label,b[1].label));
       const selected = state.filters[f.key];
       const open = state.openFilter === f.key;
       return `<div class="filter-box">
@@ -659,9 +716,9 @@ main{padding:22px}
         ${open ? `<div class="filter-panel" data-panel="${escapeHtml(f.key)}">
           <div class="filter-panel-head"><strong>${escapeHtml(f.label)}</strong><button class="link-button" data-clear-one="${escapeHtml(f.key)}">Limpiar</button></div>
           <div class="filter-options">
-            ${values.map(value => `<label class="option-row">
-              <input type="checkbox" data-filter-key="${escapeHtml(f.key)}" value="${escapeHtml(value)}" ${selected.has(value) ? "checked":""}>
-              <span>${escapeHtml(value)}</span><span class="option-count">${counts.get(value)}</span>
+            ${options.map(([canonical,info]) => `<label class="option-row">
+              <input type="checkbox" data-filter-key="${escapeHtml(f.key)}" value="${escapeHtml(canonical)}" ${selected.has(canonical) ? "checked":""}>
+              <span>${escapeHtml(info.label)}</span><span class="option-count">${info.count}</span>
             </label>`).join("") || `<div class="model-empty" style="padding:18px">Sin opciones disponibles</div>`}
           </div>
         </div>` : ""}
@@ -728,11 +785,11 @@ main{padding:22px}
     const n = norm(value);
     if (n === "SI" || n === "SÍ") return `<span class="yes">SÍ</span>`;
     if (n === "NO") return `<span class="no">NO</span>`;
-    return escapeHtml(value);
+    return escapeHtml(normalizeDisplayText(value));
   }
 
   function rowIsDifferent(values) {
-    const clean = values.map(norm);
+    const clean = values.map(canonicalComparisonValue);
     return new Set(clean).size > 1;
   }
 
