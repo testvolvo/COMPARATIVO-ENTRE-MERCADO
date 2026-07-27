@@ -348,26 +348,39 @@ main{padding:22px}
 <div id="printReport" aria-hidden="true"></div>
 <div class="toast" id="toast"></div>
 
-<script type="application/json" id="comparisonRows">[{"group":"Identificación","items":[{"key":"MARCA","label":"Marca"},{"key":"MODELO","label":"Modelo"},{"key":"DESIGNACION DE VENTA","label":"Designación de venta"},{"key":"TRACCIÓN","label":"Tracción"},{"key":"TIPO","label":"Tipo"},{"key":"Pais Fabricación","label":"País de fabricación"},{"key":"RANGO DE POTENCIA","label":"Rango de potencia"},{"key":"MODELO VOLVO","label":"Modelo Volvo equivalente"}]},{"group":"Cabina y motor","items":[{"key":"TIPO DE CABINA","label":"Tipo de cabina"},{"key":"MARCA DE MOTOR","label":"Marca del motor"},{"key":"MODELO MOTOR","label":"Modelo del motor"},{"key":"TECNOLOGIA DE INYECCIÓN","label":"Tipo de inyección"},{"key":"CILINDRADA","label":"Cilindrada"},{"key":"POTENCIA TECNICA","label":"Potencia en CV"},{"key":"TORQUE TÉCNICO","label":"Torque en Nm"},{"key":"NORMA DE CONTAMINACIÓN","label":"Norma de contaminación"}]},{"group":"Transmisión","items":[{"key":"MARCA DE LA TRANSMISIÓN","label":"Transmisión"},{"key":"MANDO DE LA TRANSMISIÓN","label":"Mando de la transmisión"},{"key":"NÚMERO DE MARCHAS","label":"Número de marchas"},{"key":"RAT PRIMERA MARCHA (CAJA - EJE)","label":"Relación de la primera marcha"},{"key":"RAT FINAL (CAJA EJE)","label":"Relación de la última marcha"},{"key":"DIÁMETRO DE EMBRAGUE","label":"Diamétro del embrague"}]},{"group":"Chasis, suspensión y frenos","items":[{"key":"TIPO DE SUSPENSIÓN DELANTERA","label":"Tipo de suspensión delantera"},{"key":"TIPO DE EJE TRASERO","label":"Tipo de eje trasero"},{"key":"RELACIÓN DE EJE TRASERO","label":"Relación del eje trasero"},{"key":"TIPO DE SUSPENSIÓN TRASERA 1","label":"Tipo de suspensión trasera"},{"key":"RELACIÓN DE PRIMERA MARCHA","label":"Relación total de primera marcha"},{"key":"RELACIÓN DE ÚLTIMA MARCHA","label":"Relación final en última marcha"},{"key":"TIPO DE FRENO DE SERVICIO","label":"Tipo de freno de servicio"},{"key":"TECNOLOGIA DE FRENO DE SERVICIO","label":"Tecnologia de freno de servicio"},{"key":"TIPO DE FRENO SECUNDARIO","label":"Freno secundario"},{"key":"POTENCIA FRENO MOTOR","label":"Potencia del freno secundario en HP"},{"key":"DEE (mm)","label":"Distancia entre ejes"}]},{"group":"Pesos, ruedas y estanques","items":[{"key":"CAPACIDAD EJE DELANTERO","label":"Capacidad del eje delanteros en Kg"},{"key":"CAPACIDAD DE EJE TRASERO","label":"Capacidad del eje trasero en Kg"},{"key":"TARA","label":"Peso de la unidad en kg"},{"key":"MEDIDA DE NEUMÁTICOS","label":"Medida del neumático"},{"key":"LLANTA","label":"Medida de la llanta en pulgadas"},{"key":"COMBUSTIBLE","label":"Capacidad de combustible"},{"key":"MATERIAL ESTANQUE","label":"Material del estanque de combustible"},{"key":"UREA","label":"Capacidad del estanque de urea"}]},{"group":"Seguridad y asistencia","items":[{"key":"DETECTOR DE CARRIL","label":"Detector de carril"},{"key":"FRENADO ACTIVO","label":"Frenado Activo"},{"key":"ALERTA DE CANSANCIO","label":"Alerta de cansancio conductor"},{"key":"AIRBAG","label":"Airbag"},{"key":"SENSOR DE LLUVIA / LUZ","label":"Sensor de lluvia / Luz"},{"key":"VDS","label":"VDS"},{"key":"Cámara de punto ciego","label":"Cámara de punto ciego"},{"key":"ACC","label":"Control crucero adaptativo"},{"key":"SENSOR DE PUNTO CIEGO","label":"Sensor de punto ciego LCS"},{"key":"CONTROL DE ESTABILIDAD","label":"Control de estabilidad ESP"},{"key":"CÁMARA DE RETROCESO","label":"Cámara de retroceso"},{"key":"TPMS","label":"TPMS"}]},{"group":"Precios","items":[{"key":"Precio lista  (USD$) ANAC","label":"Precio lista  (USD$) ANAC"},{"key":"Precio lista Competidor (USD$) ","label":"Precio lista Competidor (USD$) "},{"key":"Precio venta cliente final (USD$)","label":"Precio venta cliente final (USD$)"}]}]</script>
+
 <script>
 (async () => {
   "use strict";
   let DATA = [];
-  const DATA_CACHE_KEY = "comparativo-modelos-cache-v1";
+  let ALL_COLUMNS = [];
+  let ROW_GROUPS = [];
+  let FILTERS = [];
+  let FIELD_MAP = {};
+  const DATA_CACHE_KEY = "comparativo-modelos-cache-v3";
   const VERSION_URL = "./version.json";
   const MODELS_URL = "./modelos.json";
-  const ROW_GROUPS = JSON.parse(document.getElementById("comparisonRows").textContent);
-  const FILTERS = [
-    {key:"TRACCIÓN", label:"Tracción"},
-    {key:"TIPO", label:"Tipo"},
-    {key:"NORMA DE CONTAMINACIÓN", label:"Norma de contaminación"},
-    {key:"SEGMENTO VOLVO", label:"Segmento Volvo"},
-    {key:"MODELO VOLVO", label:"Modelo Volvo"},
-    {key:"MODELO", label:"Modelo"}
+  const INTERNAL_COLUMNS = new Set(["_uid"]);
+  const FILTER_DEFINITIONS = [
+    {semantic:"traction", label:"Tracción"},
+    {semantic:"type", label:"Tipo"},
+    {semantic:"emissions", label:"Norma de contaminación"},
+    {semantic:"volvoSegment", label:"Segmento Volvo"},
+    {semantic:"volvoModel", label:"Modelo Volvo"},
+    {semantic:"model", label:"Modelo"}
   ];
-  const PRICE_KEYS = new Set(["Precio lista  (USD$) ANAC","Precio lista Competidor (USD$) ","Precio venta cliente final (USD$)"]);
+  const CATEGORY_ORDER = [
+    ["identification","Identificación"],
+    ["engine","Cabina y motor"],
+    ["transmission","Transmisión"],
+    ["chassis","Chasis, suspensión y frenos"],
+    ["weights","Pesos, ruedas y estanques"],
+    ["safety","Seguridad y asistencia"],
+    ["prices","Precios"],
+    ["additional","Información adicional"]
+  ];
   const state = {
-    filters:Object.fromEntries(FILTERS.map(f => [f.key,new Set()])),
+    filters:{},
     selected:[],
     openFilter:null,
     modelSearch:"",
@@ -398,8 +411,186 @@ main{padding:22px}
   };
 
   const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
-  const isEmpty = value => value === null || value === undefined || String(value).trim() === "";
+  // Excel entrega los errores de formula mediante codigos COM negativos cuando se lee Value2.
+  // Se consideran sin dato para evitar que #N/D, #DIV/0!, etc. aparezcan como numeros reales.
+  const EXCEL_ERROR_CODES = new Set([
+    -2146826288, // #NULL!
+    -2146826281, // #DIV/0!
+    -2146826273, // #VALUE!
+    -2146826265, // #REF!
+    -2146826259, // #NAME?
+    -2146826252, // #NUM!
+    -2146826246, // #N/A / #N/D
+    -2146826245  // #GETTING_DATA
+  ]);
+  function isExcelErrorValue(value) {
+    if (typeof value === "number" && EXCEL_ERROR_CODES.has(value)) return true;
+    if (typeof value !== "string") return false;
+    const text = value.trim().toUpperCase();
+    if (!text) return false;
+    const numeric = Number(text);
+    if (Number.isInteger(numeric) && EXCEL_ERROR_CODES.has(numeric)) return true;
+    return /^#(?:N\/A|N\/D)$/.test(text) || /^#.+[!?]$/.test(text) || text === "#GETTING_DATA";
+  }
+  const sanitizeDataValue = value => isExcelErrorValue(value) ? null : value;
+  const isEmpty = value => value === null || value === undefined || isExcelErrorValue(value) || String(value).trim() === "";
   const norm = value => isEmpty(value) ? "" : String(value).trim().replace(/\s+/g," ").toUpperCase();
+  const normalizeHeader = value => norm(value)
+    .normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .replace(/[^A-Z0-9]+/g," ").trim().replace(/\s+/g," ");
+
+  function collectColumns(records) {
+    const columns=[];
+    const seen=new Set();
+    for (const record of records) {
+      for (const key of Object.keys(record || {})) {
+        if (INTERNAL_COLUMNS.has(key) || seen.has(key)) continue;
+        seen.add(key); columns.push(key);
+      }
+    }
+    return columns;
+  }
+
+  function columnSample(records,key,limit=240) {
+    const values=[];
+    for (const record of records) {
+      const value=record?.[key];
+      if (!isEmpty(value)) values.push(String(value).trim());
+      if (values.length>=limit) break;
+    }
+    return values;
+  }
+
+  function ratio(values,predicate) {
+    if (!values.length) return 0;
+    return values.filter(predicate).length/values.length;
+  }
+
+  function semanticScore(key,semantic,records) {
+    const h=normalizeHeader(key);
+    const values=columnSample(records,key);
+    const has=(...words)=>words.every(word=>h.includes(word));
+    const any=(...words)=>words.some(word=>h.includes(word));
+    let score=0;
+    switch (semantic) {
+      case "brand":
+        if (h==="MARCA" || h==="FABRICANTE") score=1000;
+        else if (any("MARCA","FABRICANTE") && !any("MOTOR","TRANSMISION","CAJA","EJE")) score=760;
+        break;
+      case "designation":
+        if (["DESIGNACION DE VENTA","DESIGNACION","NOMBRE COMERCIAL","VERSION COMERCIAL"].includes(h)) score=1000;
+        else if (has("DESIGNACION") || has("NOMBRE","COMERCIAL")) score=780;
+        break;
+      case "model":
+        if (h==="MODELO" || h==="MODELO SOLO") score=1000;
+        else if (h.includes("MODELO") && !any("VOLVO","MOTOR","TRANSMISION","CAJA")) score=720;
+        break;
+      case "traction":
+        if (h==="TRACCION") score=1000;
+        else if (any("TRACCION") || has("CONFIGURACION","EJES")) score=760;
+        score+=ratio(values,v=>/\b\d{1,2}\s*X\s*\d{1,2}\b/i.test(v))*650;
+        break;
+      case "type":
+        if (h==="TIPO") score=1000;
+        else if (["TIPO VEHICULO","APLICACION","CONFIGURACION VEHICULO"].includes(h)) score=850;
+        score+=ratio(values,v=>/^(RIGIDO|TRACTO|TRACTOCAMION|CAMION|CHASIS CABINA|BUS)$/i.test(normalizeHeader(v)))*520;
+        break;
+      case "emissions":
+        if (has("NORMA","CONTAMINACION") || has("NORMA","EMISION")) score=1000;
+        else if (any("EMISIONES","EMISION","CONTAMINACION")) score=720;
+        score+=ratio(values,v=>/\b(EURO|EPA)\s*[0-9IVX-]+/i.test(v))*620;
+        break;
+      case "volvoSegment":
+        if (has("SEGMENTO","VOLVO")) score=1000;
+        else if (h==="SEGMENTO") score=650;
+        break;
+      case "volvoModel":
+        if (has("MODELO","VOLVO")) score=1000;
+        else if (has("EQUIVALENTE","VOLVO")) score=900;
+        break;
+      case "power":
+        if (h==="POTENCIA") score=1000;
+        else if (has("POTENCIA") && !any("FRENO","SECUNDARIO")) score=620;
+        break;
+    }
+    return score;
+  }
+
+  function resolveSemanticFields(columns,records) {
+    const semantics=["brand","designation","model","traction","type","emissions","volvoSegment","volvoModel","power"];
+    const result={};
+    const used=new Set();
+    for (const semantic of semantics) {
+      let best=null,bestScore=0;
+      for (const key of columns) {
+        if (used.has(key)) continue;
+        const score=semanticScore(key,semantic,records);
+        if (score>bestScore) {best=key;bestScore=score;}
+      }
+      if (best && bestScore>=430) {result[semantic]=best;used.add(best);}
+    }
+    return result;
+  }
+
+  function valueOf(record,semantic) {
+    const key=FIELD_MAP[semantic];
+    return key ? record?.[key] : "";
+  }
+
+  function smartLabel(key) {
+    const clean=String(key).replace(/_/g," ").replace(/\s+/g," ").trim();
+    if (!clean || clean!==clean.toUpperCase()) return clean;
+    const acronyms=new Set(["ID","CV","HP","NM","KG","USD","ANAC","ABS","EBS","ACC","VDS","TPMS","EPA","EURO","DEE","PBT","PBV"]);
+    return clean.toLowerCase().replace(/(^|[\s(/-])([a-záéíóúñü]+|[0-9]+)/g,(match,prefix,word)=>{
+      const upper=word.toUpperCase();
+      return prefix+(acronyms.has(upper)?upper:word.charAt(0).toUpperCase()+word.slice(1));
+    });
+  }
+
+  function isPriceColumn(key) {
+    const h=normalizeHeader(key);
+    return /\b(PRECIO|VALOR COMERCIAL|COSTO|USD|DOLAR)\b/.test(h);
+  }
+
+  function directCategory(key) {
+    const h=normalizeHeader(key);
+    const includesAny=(terms)=>terms.some(term=>h.includes(term));
+    if (isPriceColumn(key)) return "prices";
+    if (includesAny(["AIRBAG","SEGURIDAD","ASISTENCIA","SENSOR","CAMARA","ALERTA","DETECTOR","CARRIL","PUNTO CIEGO","ESTABILIDAD","FRENADO ACTIVO","CONTROL CRUCERO"]) || /\b(TPMS|VDS|ACC)\b/.test(h)) return "safety";
+    if (includesAny(["TARA","PESO","CARGA","NEUMATIC","LLANTA","RUEDA","COMBUSTIBLE","ESTANQUE","TANQUE","UREA","ADBLUE"]) || /\b(PBV|PBT)\b/.test(h) || (h.includes("CAPACIDAD") && h.includes("EJE"))) return "weights";
+    if (includesAny(["TRANSMISION","CAJA","MARCHA","EMBRAGUE","GEARBOX","CAMBIO"]) || h.startsWith("RAT ")) return "transmission";
+    if (includesAny(["CHASIS","SUSPENSION","FRENO","EJE TRASERO","EJE DELANTERO","DISTANCIA ENTRE EJES","DIRECCION"]) || h==="DEE MM") return "chassis";
+    if (includesAny(["CABINA","MOTOR","INYECCION","CILINDRADA","TORQUE","TURBO","CILINDRO","POTENCIA TECNICA","EMISION","CONTAMINACION"])) return "engine";
+    if (Object.values(FIELD_MAP).includes(key) || includesAny(["DESIGNACION","MARCA","MODELO","TRACCION","PAIS","ORIGEN","SEGMENTO","RANGO DE POTENCIA"]) || h==="ID" || h==="TIPO") return "identification";
+    return null;
+  }
+
+  function buildRowGroups(columns) {
+    const assigned=columns.map(directCategory);
+    for (let index=0;index<assigned.length;index++) {
+      if (assigned[index]) continue;
+      let prev=null,next=null;
+      for (let p=index-1;p>=0;p--) if (assigned[p]) {prev={category:assigned[p],distance:index-p};break;}
+      for (let n=index+1;n<assigned.length;n++) if (assigned[n]) {next={category:assigned[n],distance:n-index};break;}
+      if (prev && next && prev.category===next.category) assigned[index]=prev.category;
+      else if (prev && next && Math.min(prev.distance,next.distance)===1 && Math.abs(prev.distance-next.distance)>=2) assigned[index]=prev.distance<next.distance?prev.category:next.category;
+      else assigned[index]="additional";
+    }
+    const grouped=new Map(CATEGORY_ORDER.map(([id,label])=>[id,{group:label,items:[]}]))
+    columns.forEach((key,index)=>grouped.get(assigned[index] || "additional").items.push({key,label:smartLabel(key)}));
+    return CATEGORY_ORDER.map(([id])=>grouped.get(id)).filter(group=>group.items.length);
+  }
+
+  function buildDynamicSchema(records) {
+    ALL_COLUMNS=collectColumns(records);
+    FIELD_MAP=resolveSemanticFields(ALL_COLUMNS,records);
+    ROW_GROUPS=buildRowGroups(ALL_COLUMNS);
+    FILTERS=FILTER_DEFINITIONS
+      .map(definition=>({key:FIELD_MAP[definition.semantic],label:definition.label,semantic:definition.semantic}))
+      .filter(filter=>Boolean(filter.key));
+    state.filters=Object.fromEntries(FILTERS.map(filter=>[filter.key,new Set()]));
+    state.openFilter=null;
+  }
 
   function compareNatural(a,b) {
     return String(a).localeCompare(String(b),"es",{numeric:true,sensitivity:"base"});
@@ -432,7 +623,10 @@ main{padding:22px}
 
   function filteredRecords() {
     const q = norm(state.modelSearch);
-    return DATA.filter(r => matchesFilters(r) && (!q || norm([r.MARCA,r.MODELO,r["DESIGNACION DE VENTA"],r["TRACCIÓN"]].join(" ")).includes(q)));
+    return DATA.filter(record => {
+      const searchable=[valueOf(record,"brand"),valueOf(record,"model"),valueOf(record,"designation"),valueOf(record,"traction"),...ALL_COLUMNS.map(key=>record[key])].join(" ");
+      return matchesFilters(record) && (!q || norm(searchable).includes(q));
+    });
   }
 
   function optionCounts(key) {
@@ -477,12 +671,13 @@ main{padding:22px}
 
   function modelCard(record) {
     const selected = state.selected.includes(record._uid);
-    const tags = [record["TRACCIÓN"],record["TIPO"],record["NORMA DE CONTAMINACIÓN"],record["POTENCIA"] ? `${record["POTENCIA"]} CV` : null].filter(Boolean);
+    const rawPower=valueOf(record,"power");
+    const tags = [valueOf(record,"traction"),valueOf(record,"type"),valueOf(record,"emissions"),rawPower ? `${rawPower}${/CV|HP/i.test(String(rawPower)) ? "" : " CV"}` : null].filter(Boolean);
     return `<button class="model-card ${selected ? "selected":""}" data-model-uid="${record._uid}" aria-pressed="${selected}">
       <span class="select-icon">${selected ? "✓":""}</span>
       <span>
-        <span class="model-brand">${escapeHtml(record["MARCA"] || "SIN MARCA")}</span>
-        <span class="model-name">${escapeHtml(record["DESIGNACION DE VENTA"] || record["MODELO"] || "Sin designación")}</span>
+        <span class="model-brand">${escapeHtml(valueOf(record,"brand") || "SIN MARCA")}</span>
+        <span class="model-name">${escapeHtml(valueOf(record,"designation") || valueOf(record,"model") || "Sin designación")}</span>
         <span class="model-meta">${tags.map(t => `<span class="meta-tag">${escapeHtml(t)}</span>`).join("")}</span>
       </span>
     </button>`;
@@ -502,7 +697,7 @@ main{padding:22px}
   function renderSelected() {
     const records = state.selected.map(uid => DATA.find(r => r._uid === uid)).filter(Boolean);
     els.selectedStrip.innerHTML = records.length ? records.map((r,i) => `<div class="selected-card vehicle-tone-${i % 6}">
-      <div><strong>${escapeHtml(r["DESIGNACION DE VENTA"] || r.MODELO)}</strong><small>${escapeHtml([r.MARCA,r["TRACCIÓN"],r.TIPO].filter(Boolean).join(" · "))}</small></div>
+      <div><strong>${escapeHtml(valueOf(r,"designation") || valueOf(r,"model") || "Sin designación")}</strong><small>${escapeHtml([valueOf(r,"brand"),valueOf(r,"traction"),valueOf(r,"type")].filter(Boolean).join(" · "))}</small></div>
       <button class="remove-btn" data-remove-uid="${r._uid}" title="Quitar">×</button>
     </div>`).join("") : `<div class="model-empty" style="min-width:100%">Selecciona al menos un modelo para ver sus características.</div>`;
     els.selectionHelp.textContent = records.length === 0 ? "Selecciona un modelo para mostrar su ficha técnica." :
@@ -520,9 +715,12 @@ main{padding:22px}
   }
 
   function formatValue(key,value) {
-    if (isEmpty(value)) return `<span class="empty-value">—</span>`;
-    if (PRICE_KEYS.has(key) && typeof value === "number") {
-      return new Intl.NumberFormat("es-CL",{style:"currency",currency:"USD",maximumFractionDigits:0}).format(value);
+    if (isEmpty(value)) return `<span class="empty-value"></span>`;
+    if (isPriceColumn(key) && typeof value === "number") {
+      const header=normalizeHeader(key);
+      if (header.includes("USD") || header.includes("DOLAR")) return new Intl.NumberFormat("es-CL",{style:"currency",currency:"USD",maximumFractionDigits:0}).format(value);
+      if (header.includes("CLP") || header.includes("PESO")) return new Intl.NumberFormat("es-CL",{style:"currency",currency:"CLP",maximumFractionDigits:0}).format(value);
+      return new Intl.NumberFormat("es-CL",{maximumFractionDigits:2}).format(value);
     }
     if (typeof value === "number") {
       return new Intl.NumberFormat("es-CL",{maximumFractionDigits:2}).format(value);
@@ -547,16 +745,16 @@ main{padding:22px}
     const q = norm(state.attributeSearch);
     let html = `<thead><tr><th>CONCEPTO / MODELO</th>${models.map((m,i) => `<th class="vehicle-col vehicle-tone-${i % 6}">
       <div class="model-head">
-        <span class="brand-line">${escapeHtml(m.MARCA || "")}</span>
-        <span class="head-name">${escapeHtml(m["DESIGNACION DE VENTA"] || m.MODELO || "")}</span>
-        <span class="head-tags">${[m["TRACCIÓN"],m.TIPO,m["NORMA DE CONTAMINACIÓN"]].filter(Boolean).map(t=>`<span>${escapeHtml(t)}</span>`).join("")}</span>
+        <span class="brand-line">${escapeHtml(valueOf(m,"brand") || "")}</span>
+        <span class="head-name">${escapeHtml(valueOf(m,"designation") || valueOf(m,"model") || "")}</span>
+        <span class="head-tags">${[valueOf(m,"traction"),valueOf(m,"type"),valueOf(m,"emissions")].filter(Boolean).map(t=>`<span>${escapeHtml(t)}</span>`).join("")}</span>
       </div>
     </th>`).join("")}</tr></thead><tbody>`;
     let visibleRows = 0;
     for (const group of ROW_GROUPS) {
       const rows = [];
       for (const item of group.items) {
-        if (q && !norm(item.label).includes(q)) continue;
+        if (q && !norm(`${item.label} ${item.key}`).includes(q)) continue;
         const values = models.map(m => m[item.key]);
         const allEmpty = values.every(isEmpty);
         const different = rowIsDifferent(values);
@@ -606,16 +804,16 @@ main{padding:22px}
     table += `<thead><tr><th>CONCEPTO / MODELO</th>${groupModels.map((m,i) => {
       const globalIndex = allModels.indexOf(m);
       return `<th class="print-vehicle-head vehicle-tone-${globalIndex % 6}">
-        <span class="print-head-brand">M${globalIndex+1} · ${escapeHtml(m.MARCA || "SIN MARCA")}</span>
-        <span class="print-head-name">${escapeHtml(m["DESIGNACION DE VENTA"] || m.MODELO || "Sin designación")}</span>
-        <span class="print-head-tags">${escapeHtml([m["TRACCIÓN"],m.TIPO,m["NORMA DE CONTAMINACIÓN"]].filter(Boolean).join(" · "))}</span>
+        <span class="print-head-brand">M${globalIndex+1} · ${escapeHtml(valueOf(m,"brand") || "SIN MARCA")}</span>
+        <span class="print-head-name">${escapeHtml(valueOf(m,"designation") || valueOf(m,"model") || "Sin designación")}</span>
+        <span class="print-head-tags">${escapeHtml([valueOf(m,"traction"),valueOf(m,"type"),valueOf(m,"emissions")].filter(Boolean).join(" · "))}</span>
       </th>`;
     }).join("")}</tr></thead><tbody>`;
     let visibleRows = 0;
     for (const section of ROW_GROUPS) {
       const rows = [];
       for (const item of section.items) {
-        if (q && !norm(item.label).includes(q)) continue;
+        if (q && !norm(`${item.label} ${item.key}`).includes(q)) continue;
         const allValues = allModels.map(m => m[item.key]);
         const allEmpty = allValues.every(isEmpty);
         const different = rowIsDifferent(allValues);
@@ -817,8 +1015,13 @@ main{padding:22px}
   }
 
   function pdfValue(key,value) {
-    if (isEmpty(value)) return '—';
-    if (PRICE_KEYS.has(key) && typeof value==='number') return 'US$'+new Intl.NumberFormat('es-CL',{maximumFractionDigits:0}).format(value);
+    if (isEmpty(value)) return '';
+    if (isPriceColumn(key) && typeof value==='number') {
+      const header=normalizeHeader(key);
+      if (header.includes('USD') || header.includes('DOLAR')) return 'US$'+new Intl.NumberFormat('es-CL',{maximumFractionDigits:0}).format(value);
+      if (header.includes('CLP') || header.includes('PESO')) return '$'+new Intl.NumberFormat('es-CL',{maximumFractionDigits:0}).format(value);
+      return new Intl.NumberFormat('es-CL',{maximumFractionDigits:2}).format(value);
+    }
     if (typeof value==='number') return new Intl.NumberFormat('es-CL',{maximumFractionDigits:2}).format(value);
     const clean=String(value).replace(/\s+/g,' ').trim();
     const upper=norm(clean);
@@ -832,7 +1035,7 @@ main{padding:22px}
     for (const section of ROW_GROUPS) {
       const sectionRows=[];
       for (const item of section.items) {
-        if (q && !norm(item.label).includes(q)) continue;
+        if (q && !norm(`${item.label} ${item.key}`).includes(q)) continue;
         const allValues=allModels.map(m=>m[item.key]);
         const allEmpty=allValues.every(isEmpty);
         const different=rowIsDifferent(allValues);
@@ -856,10 +1059,10 @@ main{padding:22px}
       const tone=PDF_TONES[(startIndex-1+index)%PDF_TONES.length];
       pdf.rect(x,y,modelW,height,tone.head,tone.border,.7);
       pdf.rect(x,y,4,height,tone.accent,null,0);
-      pdf.text(`M${startIndex+index} · ${model.MARCA || 'SIN MARCA'}`,x+9,y+7,6.2,true,[213,236,251]);
-      const nameLines=wrapPdfText(model['DESIGNACION DE VENTA'] || model.MODELO || 'Sin designación',modelW-16,7.1,true,2);
+      pdf.text(`M${startIndex+index} · ${valueOf(model,'brand') || 'SIN MARCA'}`,x+9,y+7,6.2,true,[213,236,251]);
+      const nameLines=wrapPdfText(valueOf(model,'designation') || valueOf(model,'model') || 'Sin designación',modelW-16,7.1,true,2);
       pdf.multiline(nameLines,x+9,y+17,7.1,true,PDF_COLORS.white,8.2);
-      const tags=[model['TRACCIÓN'],model.TIPO,model['NORMA DE CONTAMINACIÓN']].filter(Boolean).join(' · ');
+      const tags=[valueOf(model,'traction'),valueOf(model,'type'),valueOf(model,'emissions')].filter(Boolean).join(' · ');
       pdf.text(tags,x+9,y+37,5.9,false,[242,246,250]);
     });
     return {y:y+height,conceptW,modelW};
@@ -1023,7 +1226,14 @@ main{padding:22px}
   function normalizePayload(payload) {
     const source = Array.isArray(payload) ? payload : payload?.models;
     if (!Array.isArray(source)) throw new Error("El archivo modelos.json no tiene un formato válido.");
-    return source.map((record,index) => ({...record,_uid:Number(record._uid) || index + 1}));
+    return source.map((record,index) => {
+      const cleanRecord = {};
+      for (const [key,value] of Object.entries(record || {})) {
+        cleanRecord[key] = key === "_uid" ? value : sanitizeDataValue(value);
+      }
+      cleanRecord._uid = Number(record?._uid) || index + 1;
+      return cleanRecord;
+    });
   }
 
   function loadCachedData() {
@@ -1031,7 +1241,8 @@ main{padding:22px}
       const cached = JSON.parse(localStorage.getItem(DATA_CACHE_KEY) || "null");
       if (!cached || !Array.isArray(cached.models) || !cached.models.length) return null;
       DATA = normalizePayload(cached.models);
-      setDataStatus(`Base en caché: ${DATA.length} configuraciones · última actualización ${formatDataDate(cached.meta?.updatedAt)}. Verificando cambios…`);
+      buildDynamicSchema(DATA);
+      setDataStatus(`Base en caché: ${DATA.length} configuraciones · ${ALL_COLUMNS.length} campos detectados · última actualización ${formatDataDate(cached.meta?.updatedAt)}. Verificando cambios…`);
       return cached;
     } catch (_) {
       localStorage.removeItem(DATA_CACHE_KEY);
@@ -1054,7 +1265,7 @@ main{padding:22px}
       const version = await fetchJson(`${VERSION_URL}?t=${Date.now()}`, {cache:"no-store"});
       const cached = JSON.parse(localStorage.getItem(DATA_CACHE_KEY) || "null");
       if (!force && cached?.meta?.hash && cached.meta.hash === version.hash && DATA.length) {
-        setDataStatus(`Base online: ${DATA.length} configuraciones · actualizada ${formatDataDate(version.updatedAt)}.`);
+        setDataStatus(`Base online: ${DATA.length} configuraciones · ${ALL_COLUMNS.length} campos detectados · actualizada ${formatDataDate(version.updatedAt)}.`);
         if (notify) toast("La base ya está actualizada.");
         return false;
       }
@@ -1063,10 +1274,10 @@ main{padding:22px}
       const meta = {...(payload.meta || {}), ...version, count:newData.length};
       DATA = newData;
       state.selected = [];
-      FILTERS.forEach(filter => state.filters[filter.key].clear());
+      buildDynamicSchema(DATA);
       localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({meta,models:DATA}));
       renderAll();
-      setDataStatus(`Base online: ${DATA.length} configuraciones · actualizada ${formatDataDate(meta.updatedAt)}.`);
+      setDataStatus(`Base online: ${DATA.length} configuraciones · ${ALL_COLUMNS.length} campos detectados · actualizada ${formatDataDate(meta.updatedAt)}.`);
       if (notify) toast(`Base actualizada: ${DATA.length} configuraciones.`);
       return true;
     } catch (error) {
