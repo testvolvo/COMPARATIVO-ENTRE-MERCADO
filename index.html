@@ -126,6 +126,18 @@ main{padding:22px}
 .model-name{font-size:14px;font-weight:800;margin-top:2px;line-height:1.25}
 .model-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
 .meta-tag{font-size:11px;color:#526176;background:#edf1f5;border-radius:999px;padding:4px 7px}
+.model-distinction{display:block;margin-top:9px}
+.distinguishing-tag{
+  display:inline-flex;align-items:center;gap:5px;max-width:100%;
+  font-size:11px;font-weight:900;color:#703d00;background:#fff0c7;border:1px solid #e1a42b;
+  border-radius:999px;padding:5px 9px;box-shadow:0 2px 5px rgba(143,91,0,.12);
+}
+.distinguishing-tag::before{content:"";width:7px;height:7px;flex:0 0 7px;border-radius:50%;background:#d68100}
+.selected-distinction{display:inline-flex;margin-top:8px}
+.head-distinction{
+  display:inline-flex;align-self:flex-start;margin-top:2px;padding:3px 7px;border-radius:999px;
+  background:#ffd98b;color:#5b3600;font-size:9px;font-weight:900;letter-spacing:.02em;
+}
 .model-empty{grid-column:1/-1;text-align:center;color:var(--muted);padding:42px 16px;border:1px dashed #cfd6e1;border-radius:12px}
 .list-note{font-size:12px;color:var(--muted);margin-top:10px}
 .selected-header-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
@@ -245,6 +257,7 @@ main{padding:22px}
   .print-table .print-head-brand{display:block;color:#d5ecfb;font-size:6.8pt;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
   .print-table .print-head-name{display:block;margin-top:.8mm;font-size:8.1pt;line-height:1.16}
   .print-table .print-head-tags{display:block;margin-top:1mm;color:#f2f6fa;font-size:6.7pt;font-weight:400}
+  .print-table .print-head-detail{display:inline-block;margin-top:1.2mm;padding:1mm 1.8mm;border-radius:3mm;background:#ffd98b;color:#563300;font-size:6.4pt;font-weight:800}
   .print-table tbody th{background:#f0f3f7;color:#263448;text-align:left;font-weight:700}
   .print-table td.print-vehicle-cell{
     background:var(--col-bg,#fff)!important;border-left:1.1mm solid var(--col-accent-soft,#c4d3df)!important;
@@ -357,7 +370,8 @@ main{padding:22px}
   let ROW_GROUPS = [];
   let FILTERS = [];
   let FIELD_MAP = {};
-  const DATA_CACHE_KEY = "comparativo-modelos-cache-v5";
+  let DISTINGUISHER_MAP = new Map();
+  const DATA_CACHE_KEY = "comparativo-modelos-cache-v7";
   const VERSION_URL = "./version.json";
   const MODELS_URL = "./modelos.json";
   const INTERNAL_COLUMNS = new Set(["_uid"]);
@@ -611,10 +625,183 @@ main{padding:22px}
     return CATEGORY_ORDER.map(([id])=>grouped.get(id)).filter(group=>group.items.length);
   }
 
+
+  function findColumnByTerms(requiredTerms, forbiddenTerms=[]) {
+    let best = null;
+    let bestScore = -1;
+    for (const key of ALL_COLUMNS) {
+      const header = normalizeHeader(key);
+      if (!requiredTerms.every(term => header.includes(term))) continue;
+      if (forbiddenTerms.some(term => header.includes(term))) continue;
+      const score = requiredTerms.reduce((total,term)=>total + (header===term ? 20 : 5),0) - header.length/100;
+      if (score > bestScore) { best = key; bestScore = score; }
+    }
+    return best;
+  }
+
+  const SHORT_VARIANT_PATTERN = /^(?:MT|AT|AMT|ATM|AUT|AUTO|AUTOM|MAN|MEC|VTRONIC|TRONIC|ISHIFT|I-SHIFT)\d{0,2}$/;
+
+  function modelSimilarityParts(record) {
+    const source = valueOf(record,"model") || valueOf(record,"designation") || "";
+    const tokens = normalizeHeader(source).split(" ").filter(Boolean);
+    const removed = [];
+    const kept = tokens.filter(token => {
+      if (SHORT_VARIANT_PATTERN.test(token)) {
+        removed.push(token);
+        return false;
+      }
+      return true;
+    });
+
+    // También considera sufijos cortos al final (MT, AT, DC, LR, etc.) como
+    // una variante cuando el nombre ya contiene una numeración de modelo.
+    const hasNumericCore = kept.some(token => /\d/.test(token));
+    if (hasNumericCore && kept.length > 1) {
+      const last = kept[kept.length-1];
+      const isShortSuffix =
+        /^[A-Z]{1,3}$/.test(last) ||
+        /^(?=[A-Z0-9]{2,5}$)(?=.*[A-Z])(?=.*\d)[A-Z0-9]+$/.test(last);
+      const protectedConfig = /^\d{1,2}X\d{1,2}$/.test(last);
+      if (isShortSuffix && !protectedConfig) removed.push(kept.pop());
+    }
+
+    return {base:kept.join(""), variants:removed};
+  }
+
+  function similarModelKey(record) {
+    const parts = modelSimilarityParts(record);
+    return [
+      canonicalFilterValue(valueOf(record,"brand")),
+      parts.base,
+      canonicalFilterValue(valueOf(record,"traction")),
+      canonicalFilterValue(valueOf(record,"type")),
+      canonicalFilterValue(valueOf(record,"emissions"))
+    ].join("|");
+  }
+
+  function columnPriorityForDistinction(key) {
+    const header = normalizeHeader(key);
+    if (header.includes("MANDO") && header.includes("TRANSMISION")) return 1200;
+    if (header.includes("MARCA") && header.includes("TRANSMISION")) return 1100;
+    if (header.includes("NUMERO") && header.includes("MARCHAS")) return 1000;
+    if (header.includes("TIPO") && header.includes("CABINA")) return 860;
+    if (header === "CABINA") return 820;
+    if (header.includes("POTENCIA TECNICA")) return 780;
+    if (FIELD_MAP.power === key) return 760;
+    const category = directCategory(key);
+    return ({
+      transmission:700,
+      engine:570,
+      chassis:480,
+      weights:420,
+      safety:320,
+      identification:210,
+      additional:120,
+      prices:20
+    })[category] || 80;
+  }
+
+  function distinctionLabel(key) {
+    const header = normalizeHeader(key);
+    if (header.includes("MANDO") && header.includes("TRANSMISION")) return "TRANSMISIÓN";
+    if (header.includes("MARCA") && header.includes("TRANSMISION")) return "CAJA";
+    if (header.includes("NUMERO") && header.includes("MARCHAS")) return "MARCHAS";
+    if (header.includes("TIPO") && header.includes("CABINA")) return "CABINA";
+    if (header === "CABINA") return "CABINA";
+    if (header.includes("POTENCIA")) return "POTENCIA";
+    return smartLabel(key).toLocaleUpperCase("es-CL");
+  }
+
+  function buildDistinguishers(records) {
+    DISTINGUISHER_MAP = new Map();
+    const groups = new Map();
+
+    for (const record of records) {
+      const key = similarModelKey(record);
+      if (!key.replace(/\|/g,"")) continue;
+      if (!groups.has(key)) groups.set(key,[]);
+      groups.get(key).push(record);
+    }
+
+    const excluded = new Set([
+      FIELD_MAP.brand, FIELD_MAP.designation, FIELD_MAP.model,
+      FIELD_MAP.traction, FIELD_MAP.type, FIELD_MAP.emissions,
+      FIELD_MAP.volvoSegment, FIELD_MAP.volvoModel
+    ].filter(Boolean));
+
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+
+      let best = null;
+      for (const key of ALL_COLUMNS) {
+        if (excluded.has(key)) continue;
+        const header = normalizeHeader(key);
+        if (header === "ID" || header.includes("ID ANAC") || isPriceColumn(key) || header.includes("DESCUENTO")) continue;
+
+        const rawValues = group.map(record => record[key]);
+        const normalized = rawValues.map(canonicalComparisonValue);
+        const nonEmpty = normalized.filter(Boolean);
+        const distinct = new Set(nonEmpty);
+
+        if (distinct.size < 2) continue;
+
+        const completeness = nonEmpty.length / group.length;
+        const averageLength = rawValues
+          .filter(value => !isEmpty(value))
+          .reduce((sum,value)=>sum + String(value).length,0) / Math.max(1,nonEmpty.length);
+
+        // Prioriza mando de transmisión, caja y marchas. Después busca el
+        // detalle técnico más completo y corto que realmente distinga al grupo.
+        const score =
+          columnPriorityForDistinction(key) +
+          completeness * 120 -
+          Math.max(0,averageLength-35) * 2;
+
+        if (!best || score > best.score) best = {key,score};
+      }
+
+      if (best) {
+        const label = distinctionLabel(best.key);
+        for (const record of group) {
+          const raw = record[best.key];
+          DISTINGUISHER_MAP.set(record._uid,{
+            label,
+            value:isEmpty(raw) ? "—" : String(normalizeDisplayText(raw)),
+            key:best.key
+          });
+        }
+        continue;
+      }
+
+      // Respaldo para nombres que solo cambian por un sufijo corto (por ejemplo MT/AT).
+      const variants = group.map(record => modelSimilarityParts(record).variants.join(" "));
+      if (new Set(variants.filter(Boolean)).size > 1) {
+        group.forEach((record,index)=>{
+          DISTINGUISHER_MAP.set(record._uid,{
+            label:"VERSIÓN",
+            value:variants[index] || "—",
+            key:null
+          });
+        });
+      }
+    }
+  }
+
+  function distinguishingDetail(record) {
+    return DISTINGUISHER_MAP.get(record?._uid) || null;
+  }
+
+  function distinctionBadgeHtml(record,className="distinguishing-tag") {
+    const detail = distinguishingDetail(record);
+    if (!detail) return "";
+    return `<span class="${className}" title="${escapeHtml(detail.label)}">${escapeHtml(detail.value)}</span>`;
+  }
+
   function buildDynamicSchema(records) {
     ALL_COLUMNS=collectColumns(records);
     FIELD_MAP=resolveSemanticFields(ALL_COLUMNS,records);
     ROW_GROUPS=buildRowGroups(ALL_COLUMNS);
+    buildDistinguishers(records);
     FILTERS=FILTER_DEFINITIONS
       .map(definition=>({key:FIELD_MAP[definition.semantic],label:definition.label,semantic:definition.semantic}))
       .filter(filter=>Boolean(filter.key));
@@ -736,6 +923,7 @@ main{padding:22px}
         <span class="model-brand">${escapeHtml(valueOf(record,"brand") || "SIN MARCA")}</span>
         <span class="model-name">${escapeHtml(valueOf(record,"designation") || valueOf(record,"model") || "Sin designación")}</span>
         <span class="model-meta">${tags.map(t => `<span class="meta-tag">${escapeHtml(t)}</span>`).join("")}</span>
+        ${distinguishingDetail(record) ? `<span class="model-distinction">${distinctionBadgeHtml(record)}</span>` : ""}
       </span>
     </button>`;
   }
@@ -754,7 +942,7 @@ main{padding:22px}
   function renderSelected() {
     const records = state.selected.map(uid => DATA.find(r => r._uid === uid)).filter(Boolean);
     els.selectedStrip.innerHTML = records.length ? records.map((r,i) => `<div class="selected-card vehicle-tone-${i % 6}">
-      <div><strong>${escapeHtml(valueOf(r,"designation") || valueOf(r,"model") || "Sin designación")}</strong><small>${escapeHtml([valueOf(r,"brand"),valueOf(r,"traction"),valueOf(r,"type")].filter(Boolean).join(" · "))}</small></div>
+      <div><strong>${escapeHtml(valueOf(r,"designation") || valueOf(r,"model") || "Sin designación")}</strong><small>${escapeHtml([valueOf(r,"brand"),valueOf(r,"traction"),valueOf(r,"type")].filter(Boolean).join(" · "))}</small>${distinguishingDetail(r) ? `<span class="selected-distinction">${distinctionBadgeHtml(r)}</span>` : ""}</div>
       <button class="remove-btn" data-remove-uid="${r._uid}" title="Quitar">×</button>
     </div>`).join("") : `<div class="model-empty" style="min-width:100%">Selecciona al menos un modelo para ver sus características.</div>`;
     els.selectionHelp.textContent = records.length === 0 ? "Selecciona un modelo para mostrar su ficha técnica." :
@@ -805,6 +993,7 @@ main{padding:22px}
         <span class="brand-line">${escapeHtml(valueOf(m,"brand") || "")}</span>
         <span class="head-name">${escapeHtml(valueOf(m,"designation") || valueOf(m,"model") || "")}</span>
         <span class="head-tags">${[valueOf(m,"traction"),valueOf(m,"type"),valueOf(m,"emissions")].filter(Boolean).map(t=>`<span>${escapeHtml(t)}</span>`).join("")}</span>
+        ${distinguishingDetail(m) ? `<span class="head-distinction">${escapeHtml(distinguishingDetail(m).value)}</span>` : ""}
       </div>
     </th>`).join("")}</tr></thead><tbody>`;
     let visibleRows = 0;
@@ -864,6 +1053,7 @@ main{padding:22px}
         <span class="print-head-brand">M${globalIndex+1} · ${escapeHtml(valueOf(m,"brand") || "SIN MARCA")}</span>
         <span class="print-head-name">${escapeHtml(valueOf(m,"designation") || valueOf(m,"model") || "Sin designación")}</span>
         <span class="print-head-tags">${escapeHtml([valueOf(m,"traction"),valueOf(m,"type"),valueOf(m,"emissions")].filter(Boolean).join(" · "))}</span>
+        ${distinguishingDetail(m) ? `<span class="print-head-detail">${escapeHtml(distinguishingDetail(m).value)}</span>` : ""}
       </th>`;
     }).join("")}</tr></thead><tbody>`;
     let visibleRows = 0;
@@ -1108,7 +1298,8 @@ main{padding:22px}
   function drawPdfModelHeader(pdf,models,startIndex,y) {
     const conceptW=190;
     const modelW=(PDF_PAGE.width-PDF_PAGE.marginX*2-conceptW)/models.length;
-    const height=47;
+    const hasDetail=models.some(model=>Boolean(distinguishingDetail(model)));
+    const height=hasDetail ? 56 : 47;
     pdf.rect(PDF_PAGE.marginX,y,conceptW,height,PDF_COLORS.navy,PDF_COLORS.navy,.7);
     pdf.text('CONCEPTO / MODELO',PDF_PAGE.marginX+7,y+17,7.2,true,PDF_COLORS.white);
     models.forEach((model,index)=>{
@@ -1121,6 +1312,11 @@ main{padding:22px}
       pdf.multiline(nameLines,x+9,y+17,7.1,true,PDF_COLORS.white,8.2);
       const tags=[valueOf(model,'traction'),valueOf(model,'type'),valueOf(model,'emissions')].filter(Boolean).join(' · ');
       pdf.text(tags,x+9,y+37,5.9,false,[242,246,250]);
+      const detail=distinguishingDetail(model);
+      if(detail){
+        const detailText=`${detail.value}`;
+        pdf.text(ellipsizeLine(detailText,modelW-18,5.8,true),x+9,y+47,5.8,true,[255,218,139]);
+      }
     });
     return {y:y+height,conceptW,modelW};
   }
